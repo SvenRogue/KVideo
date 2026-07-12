@@ -45,8 +45,13 @@ jobs:
 
           # 3. Attempt Merge
           echo "Attempting to merge upstream/$UPSTREAM_BRANCH into $TARGET_BRANCH..."
+          TARGET_SHA=$(git rev-parse HEAD)
           
           if git merge upstream/$UPSTREAM_BRANCH; then
+            # Keep this fork's workflows; GITHUB_TOKEN cannot push upstream workflow changes.
+            git rm -r --ignore-unmatch .github/workflows
+            git checkout "$TARGET_SHA" -- .github/workflows
+            git diff --cached --quiet || git commit -m "Keep fork workflows during upstream sync"
             echo "✅ Merge successful. Pushing changes..."
             git push origin $TARGET_BRANCH
           else
