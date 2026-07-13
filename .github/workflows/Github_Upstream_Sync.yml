@@ -1,7 +1,6 @@
 name: Upstream Sync
 
 permissions:
-  actions: write
   contents: write
   pull-requests: write # Required to create the PR
 
@@ -54,9 +53,8 @@ jobs:
             git checkout "$TARGET_SHA" -- .github/workflows
             git diff --cached --quiet || git commit -m "Keep fork workflows during upstream sync"
             if [ "$(git rev-parse HEAD)" != "$TARGET_SHA" ]; then
-              echo "✅ Merge successful. Pushing and deploying changes..."
+              echo "✅ Merge successful. Pushing changes..."
               git push origin $TARGET_BRANCH
-              gh workflow run Cloudflare_Pages_Deploy.yml --ref $TARGET_BRANCH
             else
               echo "✅ Already up to date."
             fi
