@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { findCycles } from '../core/cycles.mjs';
 import { finding } from '../core/finding.mjs';
 import { lineCount, relative, walk, writeJson } from '../core/files.mjs';
 
@@ -11,23 +12,6 @@ function resolveImport(root, from, specifier) {
   const base = specifier.startsWith('@/') ? path.join(root, specifier.slice(2)) : path.resolve(path.dirname(from), specifier);
   const candidates = [base, ...ext.map((item) => base + item), ...ext.map((item) => path.join(base, `index${item}`))];
   return candidates.find((item) => fs.existsSync(item) && fs.statSync(item).isFile()) || null;
-}
-
-function findCycles(graph) {
-  const cycles = new Set();
-  const active = [];
-  const done = new Set();
-  const visit = (node) => {
-    const index = active.indexOf(node);
-    if (index >= 0) { cycles.add(active.slice(index).concat(node).join(' -> ')); return; }
-    if (done.has(node)) return;
-    active.push(node);
-    for (const child of graph.get(node) || []) visit(child);
-    active.pop();
-    done.add(node);
-  };
-  for (const node of graph.keys()) visit(node);
-  return [...cycles];
 }
 
 function closure(graph, start) {

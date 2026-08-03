@@ -17,7 +17,7 @@ export function log(ctx, level, event, message, data = {}) {
     path.join(ctx.artifacts, 'run.log'),
     `${entry.at} ${level.toUpperCase()} ${event} ${entry.message}${suffix}\n`,
   );
-  process.stdout.write(`[${level.toUpperCase()}] ${message}\n`);
+  process.stdout.write(`[${level.toUpperCase()}] ${entry.message}\n`);
 }
 
 export function rawPath(ctx, name) {

@@ -5,6 +5,8 @@ import { finding } from '../core/finding.mjs';
 import { relative, walk, writeJson } from '../core/files.mjs';
 import { children } from './ast-walk.mjs';
 
+// GH-PR: 235
+
 const textExt = new Set(['.ts', '.tsx', '.js', '.mjs', '.json', '.yml', '.yaml', '.toml', '.md']);
 const patterns = [
   ['private-key', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],

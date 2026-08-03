@@ -2,129 +2,120 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { finding } from '../core/finding.mjs';
 import { walk, relative, writeJson } from '../core/files.mjs';
-import { log } from '../core/log.mjs';
-import { newPage, stabilize } from '../browser/session.mjs';
-import { performAction, scanActions, stateHash } from '../browser/actions.mjs';
+import { newPage } from '../browser/session.mjs';
+import { actionCoverageReason, actionCoverageStatus } from '../policy/action-coverage.mjs';
+import { exploreRoute } from './ui-action-explorer.mjs';
 
-async function navigate(page, ctx, route, pathSteps, fixtureFile) {
-  await page.goto(`${ctx.config.localUrl}${route}`, { waitUntil: 'domcontentloaded', timeout: ctx.config.navigationTimeoutMs });
-  await stabilize(page);
-  for (const action of pathSteps) {
-    const result = await performAction(page, action, fixtureFile);
-    if (!result.ok) return result;
-    await page.waitForTimeout(250);
-  }
-  return { ok: true };
+// GH-ISSUE: 12,21,32,41,146,182; GH-PR: 136,137
+
+function sourceActionInventory(ctx) {
+  const files = walk(ctx.config.root, (file) => /\.(tsx|jsx)$/.test(file) && !file.includes('/verification/'));
+  return files.flatMap((file) => fs.readFileSync(file, 'utf8').split(/\r?\n/).flatMap((line, index) =>
+    /<(button|input|select|textarea)|onClick=|role=["']button/.test(line)
+      ? [{ file: relative(ctx.config.root, file), line: index + 1 }] : []));
 }
 
-function staysWithinRoute(ctx, route, action, urlAfter) {
-  const start = new URL(route, ctx.config.localUrl);
-  const target = action.href ? new URL(action.href, start) : new URL(urlAfter);
-  return target.origin === start.origin && target.pathname === start.pathname;
-}
-
-export async function checkUiActions(ctx) {
-  if (!ctx.state.browser || !ctx.state.pageRoutes) return;
-  const session = await newPage(ctx.state.browser, ctx, { width: 1440, height: 1000 });
+async function exploreViewport(ctx, viewport, fixtureFile) {
+  const session = await newPage(ctx.state.browser, ctx, viewport);
   await session.context.tracing.start({ screenshots: true, snapshots: true, sources: true });
-  const fixtureFile = path.join(ctx.dirs.raw, 'import-fixture.json');
-  fs.writeFileSync(fixtureFile, JSON.stringify({ settings: { sources: [] } }));
   const results = [];
   const cappedRoutes = [];
+  const emptyRoutes = [];
+  let subsumedStates = 0;
+  let deduplicatedActions = 0;
   for (const route of ctx.state.pageRoutes) {
-    const routeStart = results.length;
-    const queue = [[]];
-    const seenStates = new Set();
-    const testedActions = new Set();
-    let routeActions = 0;
-    let hitCap = false;
-    log(ctx, 'info', 'ui.action-route.start', 'Starting recursive runtime control exploration', { route });
-    while (queue.length && (ctx.config.quick ? results.length : routeActions) < ctx.config.maxActionStates) {
-      const steps = queue.shift();
-      const stepKeys = steps.map((item) => item.key);
-      const replay = await navigate(session.page, ctx, route, steps, fixtureFile);
-      if (!replay.ok) {
-        results.push({ route, depth: steps.length, steps: stepKeys, phase: 'state-replay', result: replay });
-        log(ctx, 'error', 'ui.action-failure', 'State path replay failed', { route, steps: stepKeys, result: replay });
-        await session.page.screenshot({ path: path.join(ctx.dirs.screenshots, `action-failure-${results.length}.png`), fullPage: true }).catch(() => {});
-        continue;
-      }
-      const actions = await scanActions(session.page);
-      const hash = stateHash(session.page.url(), actions);
-      if (seenStates.has(hash)) continue;
-      seenStates.add(hash);
-      for (const action of actions) {
-        if (testedActions.has(action.key)) continue;
-        if ((ctx.config.quick ? results.length : routeActions) >= ctx.config.maxActionStates) {
-          hitCap = true;
-          break;
-        }
-        testedActions.add(action.key);
-        routeActions += 1;
-        const reset = await navigate(session.page, ctx, route, steps, fixtureFile);
-        if (!reset.ok) {
-          results.push({ route, state: hash, depth: steps.length, steps: stepKeys, phase: 'action-reset', action, result: reset });
-          log(ctx, 'error', 'ui.action-failure', 'Action state reset failed', { route, state: hash, steps: stepKeys, action, result: reset });
-          continue;
-        }
-        let result;
-        try { result = await performAction(session.page, action, fixtureFile); await session.page.waitForTimeout(300); }
-        catch (error) { result = { ok: false, reason: error instanceof Error ? error.message : String(error) }; }
-        const after = result.ok ? await scanActions(session.page) : [];
-        const changed = result.ok && stateHash(session.page.url(), after) !== hash;
-        results.push({ route, state: hash, depth: steps.length, steps: stepKeys, action, result, changed, urlAfter: session.page.url() });
-        if (!result.ok) {
-          log(ctx, 'error', 'ui.action-failure', 'Runtime control interaction failed', { route, state: hash, depth: steps.length, steps: stepKeys, action, result, urlAfter: session.page.url() });
-          await session.page.screenshot({ path: path.join(ctx.dirs.screenshots, `action-failure-${results.length}.png`), fullPage: true }).catch(() => {});
-        }
-        if (changed && steps.length < ctx.config.maxActionDepth && staysWithinRoute(ctx, route, action, session.page.url())) {
-          queue.push([...steps, action]);
-        }
-      }
-    }
-    const capped = hitCap || queue.length > 0;
-    if (capped) cappedRoutes.push(route);
-    log(ctx, 'info', 'ui.action-route.end', 'Finished recursive runtime control exploration', {
-      route, actions: results.length - routeStart, uniqueActions: testedActions.size,
-      uniqueStates: seenStates.size, pendingStates: queue.length, capped,
-    });
-    if (ctx.config.quick && results.length >= ctx.config.maxActionStates) break;
+    const explored = await exploreRoute({ ctx, session, route, viewport, fixtureFile });
+    results.push(...explored.entries);
+    subsumedStates += explored.subsumedStates;
+    deduplicatedActions += explored.deduplicatedActions;
+    if (explored.capped) cappedRoutes.push(`${viewport.name}:${route}`);
+    if (explored.actions === 0) emptyRoutes.push(`${viewport.name}:${route}`);
   }
-  const trace = path.join(ctx.dirs.traces, 'ui-actions.zip');
+  const trace = path.join(ctx.dirs.traces, `ui-actions-${viewport.name}.zip`);
   await session.context.tracing.stop({ path: trace });
   await session.context.close();
-  const declared = sourceActionInventory(ctx);
-  const target = path.join(ctx.dirs.raw, 'ui-actions.json');
-  writeJson(target, { results, declared, cappedRoutes, observed: session.observed });
-  const failures = results.filter((item) => item.result && !item.result.ok);
-  const skipped = results.filter((item) => item.result?.skipped);
-  const uniqueRuntime = new Set(results.filter((item) => item.action).map((item) => `${item.route}|${item.action.key}`)).size;
+  return { results, cappedRoutes, emptyRoutes, subsumedStates, deduplicatedActions, observed: session.observed, trace };
+}
+
+function addExecutionFinding(ctx, results, skipped, target, traces) {
+  const effectKinds = new Set(['no-effect', 'media-proof']);
+  const failures = results.filter((item) => item.result && !item.result.ok && !effectKinds.has(item.result.failureKind));
   finding(ctx, {
     id: 'ui.action-execution', category: 'ui', title: 'Every discovered runtime control accepts its intended interaction',
     status: failures.length ? 'FAIL' : 'PASS', severity: 'critical', expected: '0 click/fill/select/upload failures',
     actual: failures.length ? JSON.stringify(failures.slice(0, 30)) : `${results.length - skipped.length} operated; ${skipped.length} disabled/skipped`,
     reason: failures.length ? 'A visible runtime control could not be replayed or operated.' : 'All discovered controls were exercised without automation failure.',
-    evidence: [target, trace], remediation: 'Repair unstable selectors, disabled-state logic, click handlers, or the underlying UI exception.',
-  });
-  finding(ctx, {
-    id: 'ui.action-state-coverage', category: 'ui', title: 'Recursive UI state exploration exhausts its queue',
-    status: cappedRoutes.length ? (ctx.config.quick ? 'SKIP' : 'FAIL') : 'PASS', severity: 'high', expected: `Queue exhausted below ${ctx.config.maxActionStates} actions per route and depth ${ctx.config.maxActionDepth}`,
-    actual: cappedRoutes.length ? `Coverage cap reached on ${cappedRoutes.join(', ')} after ${results.length} actions` : `${results.length} actions; queue exhausted`,
-    reason: cappedRoutes.length ? (ctx.config.quick ? 'Quick mode intentionally limits exploration.' : 'Unexplored reachable states remain, so “all buttons” cannot be claimed.') : 'No additional state-changing action remained within the discovered graph.',
-    evidence: [target], remediation: 'Raise limits or split workflows until every reachable state is exhausted.',
-  });
-  finding(ctx, {
-    id: 'ui.action-inventory', category: 'ui', title: 'Static and runtime interaction inventory is recorded',
-    status: 'INFO', severity: 'info', expected: 'Every source declaration and discovered runtime control remains auditable',
-    actual: JSON.stringify({ staticDeclarationSites: declared.length, runtimeActionInstances: results.length, uniqueRuntimeControls: uniqueRuntime, disabledOrSkipped: skipped.length, failures: failures.length, cappedRoutes }),
-    reason: 'Static declaration sites and runtime controls are different populations; the evidence preserves both without claiming a false one-to-one mapping.',
-    evidence: [target], remediation: 'Use file/line declarations and trace-backed runtime states to investigate controls absent from reachable test states.',
+    evidence: [target, ...traces], remediation: 'Repair unstable selectors, disabled-state logic, click handlers, or the underlying UI exception.',
   });
 }
 
-function sourceActionInventory(ctx) {
-  const files = walk(ctx.config.root, (file) => /\.(tsx|jsx)$/.test(file) && !file.includes('/verification/'));
-  return files.flatMap((file) => fs.readFileSync(file, 'utf8').split(/\r?\n/).flatMap((line, index) =>
-    /<(button|input|select|textarea)|onClick=|role=["']button/.test(line) ? [{ file: relative(ctx.config.root, file), line: index + 1 }] : [],
-  ));
+function addEffectFinding(ctx, results, target, traces) {
+  const inspected = results.filter((item) => item.assessment && !item.assessment.idempotent);
+  const failures = inspected.filter((item) => !item.assessment.ok
+    && ['no-effect', 'media-proof'].includes(item.assessment.failureKind));
+  finding(ctx, {
+    id: 'ui.action-observable-effects', category: 'ui', title: 'Every operated control produces its intended observable effect',
+    status: failures.length ? 'FAIL' : 'PASS', severity: 'critical', expected: '0 silent no-op controls and valid media semantics',
+    actual: failures.length ? JSON.stringify(failures.slice(0, 50)) : `${inspected.length} interactions produced observable effects`,
+    reason: failures.length ? 'A control accepted automation but did not change UI/state/storage/media/network/navigation or failed dedicated media proof.'
+      : 'Each non-idempotent interaction produced independently observable evidence.',
+    evidence: [target, ...traces], remediation: 'Repair the handler or add a deterministic success fixture that exposes the intended effect.',
+  });
+}
+
+function addCoverageFinding(ctx, results, cappedRoutes, emptyRoutes, target) {
+  const input = { quick: ctx.config.quick, cappedRoutes, emptyRoutes };
+  const status = actionCoverageStatus(input);
+  const details = [];
+  if (emptyRoutes.length) details.push(`zero-control surfaces: ${emptyRoutes.join(', ')}`);
+  if (cappedRoutes.length) details.push(`coverage cap reached: ${cappedRoutes.join(', ')}`);
+  finding(ctx, {
+    id: 'ui.action-state-coverage', category: 'ui', title: 'Every viewport action graph discovers controls and exhausts its queue',
+    status, severity: 'high', expected: `At least one control per route/viewport; below ${ctx.config.maxActionStates} actions and depth ${ctx.config.maxActionDepth}`,
+    actual: details.length ? `${details.join('; ')}; ${results.length} results` : `${results.length} results; all queues exhausted`,
+    reason: actionCoverageReason(input),
+    evidence: [target], remediation: 'Raise limits or split workflows until every reachable route/viewport state is exhausted.',
+  });
+}
+
+function addInventoryFinding(ctx, data, target) {
+  const unique = new Set(data.results.filter((item) => item.action)
+    .map((item) => `${item.viewport}|${item.route}|${item.action.key}`)).size;
+  finding(ctx, {
+    id: 'ui.action-inventory', category: 'ui', title: 'Static declarations and runtime controls are fully recorded',
+    status: 'INFO', severity: 'info', expected: 'Auditable static and runtime populations',
+    actual: JSON.stringify({ staticDeclarationSites: data.declared.length, runtimeActionInstances: data.results.length,
+      uniqueRuntimeControls: unique, disabledOrSkipped: data.skipped.length, cappedRoutes: data.cappedRoutes,
+      zeroControlSurfaces: data.emptyRoutes, subsumedSemanticStates: data.subsumedStates,
+      deduplicatedSemanticActions: data.deduplicatedActions }),
+    reason: 'Every target viewport is explored; static declarations remain separate because source sites do not map one-to-one to rendered instances.',
+    evidence: [target], remediation: 'Inspect declaration sites absent from all reachable runtime states.',
+  });
+}
+
+export async function checkUiActions(ctx) {
+  if (!ctx.state.browser || !ctx.state.pageRoutes) return;
+  const fixtureFile = path.join(ctx.dirs.raw, 'import-fixture.json');
+  fs.writeFileSync(fixtureFile, JSON.stringify({ sources: [{ id: 'file-fixture', name: 'File Fixture',
+    baseUrl: 'https://verification-fixture.kvideo.invalid', enabled: true, group: 'normal' }] }));
+  const runs = [];
+  for (const viewport of ctx.config.viewports) runs.push(await exploreViewport(ctx, viewport, fixtureFile));
+  const results = runs.flatMap((item) => item.results);
+  const cappedRoutes = runs.flatMap((item) => item.cappedRoutes);
+  const emptyRoutes = runs.flatMap((item) => item.emptyRoutes);
+  const subsumedStates = runs.reduce((total, item) => total + item.subsumedStates, 0);
+  const deduplicatedActions = runs.reduce((total, item) => total + item.deduplicatedActions, 0);
+  const skipped = results.filter((item) => item.result?.skipped);
+  const declared = sourceActionInventory(ctx);
+  const target = path.join(ctx.dirs.raw, 'ui-actions.json');
+  const summary = { operated: results.filter((item) => item.interaction?.ok && !item.interaction.skipped).length,
+    stateChanges: results.filter((item) => item.assessment?.stateChanged).length,
+    effectFailures: results.filter((item) => item.assessment && !item.assessment.ok).length,
+    subsumedStates, deduplicatedActions };
+  writeJson(target, { results, declared, cappedRoutes, emptyRoutes, summary, observed: runs.map((item) => item.observed) });
+  const traces = runs.map((item) => item.trace);
+  addExecutionFinding(ctx, results, skipped, target, traces);
+  addEffectFinding(ctx, results, target, traces);
+  addCoverageFinding(ctx, results, cappedRoutes, emptyRoutes, target);
+  addInventoryFinding(ctx, { results, declared, skipped, cappedRoutes, emptyRoutes, subsumedStates, deduplicatedActions }, target);
 }

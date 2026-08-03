@@ -3,6 +3,8 @@ import { finding } from '../core/finding.mjs';
 import { jsonBody, request } from '../core/http.mjs';
 import { writeJson } from '../core/files.mjs';
 
+// GH-ISSUE: 7,10,12,16,20,21,25,143,172,186
+
 export async function checkApiContracts(ctx) {
   if (!ctx.state.appReady) return;
   const source = { id: 'fixture', name: 'Fixture', baseUrl: ctx.config.fixtureUrl, searchPath: '/source', detailPath: '/source', enabled: true };

@@ -1,6 +1,6 @@
 import http from 'node:http';
 import path from 'node:path';
-import { posterSvg, sourceResponse } from './source.mjs';
+import { posterSvg, sourceImportPayload, sourceResponse } from './source.mjs';
 import { sendFile } from './static.mjs';
 
 function json(response, status, value, headers = {}) {
@@ -21,7 +21,9 @@ export async function startFixtureServer(ctx) {
     if (url.pathname.startsWith('/status/')) { const status = Number(url.pathname.split('/').pop()) || 500; json(response, status, { status }); return; }
     if (url.pathname === '/redirect') { response.writeHead(302, { Location: `${baseUrl}/fast` }); response.end(); return; }
     if (url.pathname === '/headers') { json(response, 200, { method: request.method, headers: request.headers }); return; }
-    if (url.pathname === '/source') { json(response, 200, sourceResponse(baseUrl, url.searchParams)); return; }
+    const sourceRoutes = { '/source': () => sourceResponse(baseUrl, url.searchParams),
+      '/source-import.json': () => sourceImportPayload(baseUrl) };
+    if (sourceRoutes[url.pathname]) { json(response, 200, sourceRoutes[url.pathname]()); return; }
     if (url.pathname === '/poster.svg') { response.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Access-Control-Allow-Origin': '*' }); response.end(posterSvg(url.searchParams.get('item'))); return; }
     if (url.pathname === '/test.mp4') { sendFile(request, response, path.join(ctx.dirs.media, 'test.mp4')); return; }
     if (url.pathname.startsWith('/hls/')) { sendFile(request, response, path.join(ctx.dirs.media, url.pathname.slice(1))); return; }

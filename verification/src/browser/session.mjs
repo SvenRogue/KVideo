@@ -1,6 +1,10 @@
 import { chromium } from 'playwright';
-import { browserInit, sourceArgument } from './init.mjs';
+import { BROWSER_FIXTURE_ORIGIN, browserInit, sourceArgument } from './init.mjs';
 import { installMocks } from './mocks.mjs';
+
+export function requestFailureBucket(error) {
+  return /\bERR_ABORTED\b/.test(error || '') ? 'abortedRequests' : 'failedRequests';
+}
 
 export async function launchBrowser(ctx) {
   const browser = await chromium.launch({
@@ -14,16 +18,23 @@ export async function launchBrowser(ctx) {
 
 export async function newPage(browser, ctx, viewport) {
   const context = await browser.newContext({ viewport, colorScheme: 'dark', locale: 'zh-CN', reducedMotion: 'reduce' });
-  await context.addInitScript(browserInit(), sourceArgument(ctx.config.fixtureUrl));
+  await context.addInitScript(browserInit(), sourceArgument(BROWSER_FIXTURE_ORIGIN));
+  await installMocks(context, ctx);
   const page = await context.newPage();
-  const observed = { consoleErrors: [], consoleWarnings: [], pageErrors: [], failedRequests: [], httpErrors: [], dialogs: [], downloads: [], popups: [] };
+  const observed = { consoleErrors: [], consoleWarnings: [], pageErrors: [], failedRequests: [], abortedRequests: [], httpErrors: [], dialogs: [], downloads: [], fileChoosers: [], popups: [],
+    requestCount: 0, responseCount: 0 };
   page.on('console', (message) => {
     if (message.type() === 'error') observed.consoleErrors.push(message.text());
     if (message.type() === 'warning') observed.consoleWarnings.push(message.text());
   });
   page.on('pageerror', (error) => observed.pageErrors.push(error.stack || error.message));
-  page.on('requestfailed', (request) => observed.failedRequests.push({ url: request.url(), error: request.failure()?.errorText }));
+  page.on('request', () => { observed.requestCount += 1; });
+  page.on('requestfailed', (request) => {
+    const event = { url: request.url(), error: request.failure()?.errorText };
+    observed[requestFailureBucket(event.error)].push(event);
+  });
   page.on('response', (response) => {
+    observed.responseCount += 1;
     if (response.status() >= 400) observed.httpErrors.push({ method: response.request().method(), status: response.status(), url: response.url() });
   });
   page.on('dialog', async (dialog) => {
@@ -31,11 +42,12 @@ export async function newPage(browser, ctx, viewport) {
     await dialog.dismiss().catch(() => {});
   });
   page.on('download', (download) => observed.downloads.push({ filename: download.suggestedFilename(), url: download.url() }));
+  page.on('filechooser', (chooser) => observed.fileChoosers.push({ multiple: chooser.isMultiple() }));
   page.on('popup', (popup) => {
-    observed.popups.push({ url: popup.url() });
-    popup.close().catch(() => {});
+    const event = { url: popup.url() };
+    observed.popups.push(event);
+    popup.on('framenavigated', (frame) => { if (frame === popup.mainFrame()) event.url = popup.url(); });
   });
-  await installMocks(page, ctx);
   return { context, page, observed };
 }
 

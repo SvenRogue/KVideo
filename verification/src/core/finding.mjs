@@ -1,10 +1,11 @@
 import { log } from './log.mjs';
+import { redact } from './redact.mjs';
 
 const validStatus = new Set(['PASS', 'FAIL', 'WARN', 'SKIP', 'INFO']);
 const validSeverity = new Set(['critical', 'high', 'medium', 'low', 'info']);
 
 export function finding(ctx, input) {
-  const item = {
+  const item = redact({
     id: input.id,
     category: input.category || 'general',
     title: input.title,
@@ -18,7 +19,7 @@ export function finding(ctx, input) {
     evidence: input.evidence || [],
     durationMs: Math.round(input.durationMs || 0),
     at: new Date().toISOString(),
-  };
+  });
   ctx.findings.push(item);
   log(ctx, item.status === 'FAIL' ? 'error' : 'info', item.id, item.title, {
     status: item.status,

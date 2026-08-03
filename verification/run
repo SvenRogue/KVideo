@@ -15,5 +15,8 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 
 export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-npm ci --prefix "$verify_dir" --no-audit --no-fund --ignore-scripts
+(
+  cd "$verify_dir"
+  npm ci --no-audit --no-fund --ignore-scripts
+)
 exec node "$verify_dir/src/main.mjs" --root "$repo_dir" "$@"

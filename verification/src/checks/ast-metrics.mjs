@@ -5,7 +5,7 @@ import { finding } from '../core/finding.mjs';
 import { relative, walk, writeJson } from '../core/files.mjs';
 import { collectFunctions } from './ast-walk.mjs';
 
-const extensions = new Set(['.ts', '.tsx']);
+const extensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 
 export async function checkAstMetrics(ctx) {
   const files = walk(ctx.config.root, (file) => extensions.has(path.extname(file)) && !file.includes('/verification/'));
@@ -13,7 +13,7 @@ export async function checkAstMetrics(ctx) {
   const parseErrors = [];
   for (const file of files) {
     try {
-      const ast = parse(fs.readFileSync(file, 'utf8'), { loc: true, jsx: file.endsWith('.tsx'), errorOnUnknownASTType: false });
+      const ast = parse(fs.readFileSync(file, 'utf8'), { loc: true, jsx: /\.[jt]sx$/.test(file), errorOnUnknownASTType: false });
       const functions = collectFunctions(ast);
       metrics.push({ file: relative(ctx.config.root, file), functions });
     } catch (error) {
@@ -26,10 +26,10 @@ export async function checkAstMetrics(ctx) {
   const target = path.join(ctx.dirs.metrics, 'ast-metrics.json');
   writeJson(target, { parseErrors, offenders, files: metrics });
   finding(ctx, {
-    id: 'quality.ast-parse', category: 'quality', title: 'TypeScript source is structurally analyzable',
-    status: parseErrors.length ? 'FAIL' : 'PASS', severity: 'high', expected: 'All TS/TSX files parse',
+    id: 'quality.ast-parse', category: 'quality', title: 'JavaScript and TypeScript source is structurally analyzable',
+    status: parseErrors.length ? 'FAIL' : 'PASS', severity: 'high', expected: 'All JS/JSX/MJS/CJS/TS/TSX files parse',
     actual: parseErrors.length ? JSON.stringify(parseErrors.slice(0, 20)) : `${files.length} files parsed`,
-    reason: parseErrors.length ? 'Unparseable files invalidate structural quality metrics.' : 'AST metrics cover all TS/TSX files.',
+    reason: parseErrors.length ? 'Unparseable files invalidate structural quality metrics.' : 'AST metrics cover every authored JavaScript and TypeScript file.',
     evidence: [target], remediation: 'Fix syntax/parser incompatibilities before relying on complexity results.',
   });
   finding(ctx, {

@@ -29,8 +29,9 @@ export function getConfig(argv) {
     verifyDir,
     quick,
     offline,
+    auditGithub: args.includes('--audit-github'),
+    candidate: args.includes('--candidate'),
     keepServer: args.includes('--keep-server'),
-    strict: !args.includes('--non-strict'),
     referenceUrl: valueAfter(args, '--reference-url') || 'https://kvideo.pages.dev',
     localUrl: valueAfter(args, '--base-url') || 'http://127.0.0.1:34173',
     fixtureUrl: 'http://127.0.0.1:34174',
@@ -47,6 +48,7 @@ export function getConfig(argv) {
     maxLcpMs: 2500,
     maxCls: 0.1,
     maxLongTaskMs: 500,
+    coveragePercent: 100,
     minVideoAdvanceSeconds: 1.2,
     viewports: quick ? [viewports[2]] : viewports,
   };

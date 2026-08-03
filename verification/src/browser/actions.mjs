@@ -1,57 +1,10 @@
-import crypto from 'node:crypto';
 import { fillInput, prepareActionState, toggleInput } from './action-state.mjs';
+import { scanActions, stateDifference, stateHash, stateSnapshot } from './action-scan.mjs';
 
-export async function scanActions(page) {
-  return page.evaluate(() => {
-    const selector = 'button,a[href],input,select,textarea,[role="button"],[data-focusable]';
-    document.querySelectorAll('[data-kv-verify]').forEach((element) => element.removeAttribute('data-kv-verify'));
-    const visible = (element) => {
-      const style = getComputedStyle(element);
-      const box = element.getBoundingClientRect();
-      if (element.closest('[aria-hidden="true"],[hidden],[inert]')) return false;
-      if (style.visibility === 'hidden' || style.display === 'none' || style.pointerEvents === 'none' || Number(style.opacity) === 0) return false;
-      if (box.width <= 0 || box.height <= 0) return false;
-      const fixed = style.position === 'fixed' || getComputedStyle(element.parentElement || element).position === 'fixed';
-      if (fixed && (box.bottom <= 0 || box.top >= innerHeight || box.right <= 0 || box.left >= innerWidth)) return false;
-      const intersects = box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth;
-      if (!intersects) return true;
-      const x = Math.max(0, Math.min(innerWidth - 1, box.left + box.width / 2));
-      const y = Math.max(0, Math.min(innerHeight - 1, box.top + box.height / 2));
-      const top = document.elementFromPoint(x, y);
-      return !top || top === element || element.contains(top);
-    };
-    const identity = (element) => {
-      const explicit = ['id', 'name', 'data-testid', 'aria-controls'].map((name) => element.getAttribute(name)).find(Boolean);
-      if (explicit) return `${element.tagName.toLowerCase()}#${explicit}`;
-      const parts = [];
-      for (let current = element; current?.parentElement && current !== document.body && parts.length < 6; current = current.parentElement) {
-        const siblings = [...current.parentElement.children].filter((item) => item.tagName === current.tagName);
-        parts.unshift(`${current.tagName.toLowerCase()}:${siblings.indexOf(current) + 1}`);
-      }
-      return parts.join('>');
-    };
-    const counts = new Map();
-    return [...document.querySelectorAll(selector)].filter(visible).map((element, id) => {
-      const text = (element.innerText || element.value || '').trim().replace(/\s+/g, ' ').slice(0, 120);
-      const disabled = element.matches(':disabled') || Boolean(element.closest('[aria-disabled="true"]'));
-      const state = [element.value || '', element.checked ?? '', element.getAttribute('aria-expanded') || '',
-        element.getAttribute('aria-pressed') || '', element.getAttribute('data-state') || '', disabled].join(':');
-      const path = identity(element);
-      const base = [path, element.getAttribute('role') || '', element.getAttribute('aria-label') || '', text, element.getAttribute('href') || '', element.getAttribute('type') || '', state].join('|');
-      const occurrence = counts.get(base) || 0;
-      counts.set(base, occurrence + 1);
-      element.setAttribute('data-kv-verify', String(id));
-      return {
-        id, key: `${base}|${occurrence}`, path, tag: element.tagName.toLowerCase(), text,
-        aria: element.getAttribute('aria-label') || '', href: element.getAttribute('href') || '',
-        type: element.getAttribute('type') || '', state, disabled,
-      };
-    });
-  });
-}
+export { scanActions, stateDifference, stateHash, stateSnapshot };
 
-export function stateHash(url, actions) {
-  return crypto.createHash('sha256').update(`${url}\n${actions.map((item) => item.key).join('\n')}`).digest('hex').slice(0, 20);
+export function actionTransitioned(result, before, after) {
+  return Boolean(result?.ok && !result.skipped && !result.idempotent && before !== after);
 }
 
 async function findCurrent(page, action) {
@@ -59,47 +12,96 @@ async function findCurrent(page, action) {
     const actions = await scanActions(page);
     const exact = actions.find((item) => item.key === action.key);
     if (exact) return { current: exact, matchedBy: 'key' };
-    if (['input', 'textarea', 'select'].includes(action.tag)) {
-      const fields = ['path', 'tag', 'aria', 'href', 'type', 'disabled'];
-      const structural = actions.filter((item) => fields.every((field) => item[field] === action[field]));
-      if (structural.length === 1) return { current: structural[0], matchedBy: 'structure' };
-    }
-    const semantic = actions.filter((item) => ['tag', 'aria', 'text', 'href', 'type', 'state'].every((field) => item[field] === action[field]));
-    if (semantic.length === 1) return { current: semantic[0], matchedBy: 'semantic' };
+    const semantic = actions.filter((item) => item.signature === action.signature);
+    if (semantic.length === 1) return { current: semantic[0], matchedBy: 'signature' };
+    const fields = ['tag', 'aria', 'roleDescription', 'text', 'href', 'target', 'type', 'state'];
+    const fallback = actions.filter((item) => fields.every((field) => item[field] === action[field]));
+    if (fallback.length === 1) return { current: fallback[0], matchedBy: 'semantic' };
     await prepareActionState(page, action);
-    const viewport = page.viewportSize();
-    if (viewport) {
-      await page.mouse.move(1, 1);
-      await page.mouse.move(Math.floor(viewport.width / 2), Math.floor(viewport.height / 2));
-    }
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(150);
   }
   return null;
 }
 
+async function selectAlternative(locator) {
+  const state = await locator.evaluate((element) => ({
+    value: element.value,
+    values: [...element.options].filter((option) => !option.disabled).map((option) => option.value),
+  }));
+  const candidate = state.values.find((value) => value !== state.value);
+  if (candidate === undefined) return { ok: true, skipped: true, idempotent: true, reason: 'select has no alternative option' };
+  await locator.selectOption(candidate);
+  return { ok: true, operation: 'select' };
+}
+
+export async function clickControl(page, locator, target) {
+  if (target !== '_blank') {
+    await locator.click({ timeout: 5000 });
+    return { operation: 'click' };
+  }
+  const popupPromise = page.waitForEvent('popup', { timeout: 5000 });
+  await locator.click({ timeout: 5000 });
+  const popup = await popupPromise;
+  await popup.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
+  const popupUrl = popup.url();
+  await popup.close().catch(() => {});
+  return { operation: 'click', popupUrl };
+}
+
+export async function reorderSortable(page, locator) {
+  const selector = '[aria-roledescription="sortable"][data-kv-verify]:not([aria-disabled="true"])';
+  const parent = typeof locator.locator === 'function' ? locator.locator('xpath=..') : null;
+  const peers = parent && typeof parent.locator === 'function' ? parent.locator(`:scope > ${selector}`) : page.locator(selector);
+  const count = await peers.count();
+  if (count < 2) return { skipped: true, idempotent: true, reason: 'sortable control has no alternative position' };
+  const id = await locator.getAttribute('data-kv-verify');
+  const before = await peers.evaluateAll((elements, targetId) => ({
+    index: elements.findIndex((element) => element.getAttribute('data-kv-verify') === targetId),
+    order: elements.map((element) => `${element.getAttribute('aria-label') || ''}|${(element.textContent || '').trim().replace(/\s+/g, ' ')}`),
+  }), id);
+  if (before.index < 0) return { ok: false, reason: 'sortable control is missing from its peer group' };
+  const direction = before.index === count - 1 ? 'ArrowLeft' : 'ArrowRight';
+  await locator.focus();
+  for (const key of ['Space', direction, 'Space']) {
+    await page.keyboard.press(key);
+    await page.waitForTimeout(50);
+  }
+  let afterOrder = before.order;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await page.waitForTimeout(100);
+    afterOrder = await peers.evaluateAll((elements) => elements.map((element) =>
+      `${element.getAttribute('aria-label') || ''}|${(element.textContent || '').trim().replace(/\s+/g, ' ')}`));
+    if (JSON.stringify(afterOrder) !== JSON.stringify(before.order)) break;
+  }
+  if (JSON.stringify(afterOrder) === JSON.stringify(before.order)) {
+    return { ok: false, reason: 'sortable keyboard interaction did not change peer order', direction, beforeOrder: before.order, afterOrder };
+  }
+  return { operation: 'keyboard-sort', direction, beforeOrder: before.order, afterOrder };
+}
+
 export async function performAction(page, action, fixtureFile) {
+  await prepareActionState(page, action);
   const match = await findCurrent(page, action);
   if (!match) return { ok: false, reason: 'action missing during replay' };
   const { current, matchedBy } = match;
   if (current.disabled) return { ok: true, skipped: true, matchedBy, reason: 'control is disabled in this state' };
   const locator = page.locator(`[data-kv-verify="${current.id}"]`);
+  if (current.roleDescription === 'sortable') {
+    const result = await reorderSortable(page, locator);
+    return { ok: result.ok !== false, matchedBy, ...result };
+  }
   if (current.tag === 'input' && current.type === 'file') {
     await locator.setInputFiles(fixtureFile); return { ok: true, operation: 'setInputFiles', matchedBy };
   }
   if (current.tag === 'input' && ['checkbox', 'radio'].includes(current.type)) {
-    return { ok: true, operation: await toggleInput(locator, current.type), matchedBy };
+    return { ok: true, matchedBy, ...await toggleInput(locator, current.type) };
   }
-  if (current.tag === 'input' && ['button', 'submit'].includes(current.type)) {
-    await locator.click({ timeout: 5000 }); return { ok: true, operation: 'click', matchedBy };
+  if (current.tag === 'input' && ['button', 'submit', 'reset'].includes(current.type)) {
+    return { ok: true, matchedBy, ...await clickControl(page, locator, current.target) };
   }
-  if (current.tag === 'input' || current.tag === 'textarea') {
-    await fillInput(locator, current.type); return { ok: true, operation: 'fill', matchedBy };
+  if (current.tag === 'input' || current.tag === 'textarea' || current.contenteditable) {
+    return { ok: true, matchedBy, ...await fillInput(locator, current.type) };
   }
-  if (current.tag === 'select') {
-    const values = await locator.locator('option').evaluateAll((options) => options.map((option) => option.value));
-    if (!values.length) return { ok: true, skipped: true, matchedBy, reason: 'select has no options' };
-    await locator.selectOption(values[Math.min(1, values.length - 1)]); return { ok: true, operation: 'select', matchedBy };
-  }
-  await locator.click({ timeout: 5000 });
-  return { ok: true, operation: 'click', matchedBy };
+  if (current.tag === 'select') return { matchedBy, ...await selectAlternative(locator) };
+  return { ok: true, matchedBy, ...await clickControl(page, locator, current.target) };
 }

@@ -5,6 +5,8 @@ import { finding } from '../core/finding.mjs';
 import { jsonBody, request } from '../core/http.mjs';
 import { writeJson } from '../core/files.mjs';
 
+// GH-ISSUE: 16,20,25,78,80,140,143,150,172,174,182,186; GH-PR: 29
+
 function digest(output) {
   return output?.match(/^Digest:\s+(sha256:[a-f0-9]+)/m)?.[1] || null;
 }
@@ -17,6 +19,11 @@ export function latestDeployment(output) {
 }
 
 export async function checkDeployment(ctx) {
+  if (ctx.config.candidate) return finding(ctx, {
+    id: 'deploy.consistency', category: 'deployment', title: 'Local, GitHub, Cloudflare, and Docker release consistency', status: 'SKIP', severity: 'critical',
+    expected: 'Published release audit', actual: '--candidate', reason: 'A candidate commit cannot match public release surfaces before it is merged and published.',
+    remediation: 'After publishing, run ./verification/run without --candidate and require exact convergence.',
+  });
   if (ctx.config.offline) return finding(ctx, {
     id: 'deploy.consistency', category: 'deployment', title: 'Local, GitHub, Cloudflare, and Docker release consistency', status: 'SKIP', severity: 'critical',
     expected: 'Online verification', actual: '--offline', reason: 'Remote state cannot be verified offline.', remediation: 'Rerun online before release.',

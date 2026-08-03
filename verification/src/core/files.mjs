@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { redact } from './redact.mjs';
 
-const ignored = new Set(['.git', '.next', '.vercel', '.wrangler', 'node_modules', 'artifacts']);
+const ignored = new Set(['.git', '.gradle', '.next', '.vercel', '.wrangler', 'artifacts', 'build', 'cache', 'coverage', 'dist', 'node_modules', 'out']);
 
 export function walk(root, predicate = () => true) {
   const output = [];
@@ -28,7 +29,7 @@ export function lineCount(file) {
 
 export function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(value, null, 2));
+  fs.writeFileSync(file, JSON.stringify(redact(value), null, 2));
 }
 
 export function readJson(file) {

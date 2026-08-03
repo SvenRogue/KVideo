@@ -1,7 +1,8 @@
+export const BROWSER_FIXTURE_ORIGIN = 'https://verification-fixture.kvideo.invalid';
+
 export function browserInit() {
   return ({ sourceConfig }) => {
-    localStorage.clear();
-    sessionStorage.clear();
+    try { localStorage.clear(); sessionStorage.clear(); } catch { /* opaque document */ }
     try { Object.defineProperty(document, 'startViewTransition', { value: undefined, configurable: true }); } catch {}
     const settings = {
       sources: [sourceConfig], premiumSources: [sourceConfig], subscriptions: [], sortBy: 'default', searchHistory: true,
@@ -12,10 +13,15 @@ export function browserInit() {
       videoTogetherEnabled: false, danmakuEnabled: false, danmakuApiUrl: '', danmakuOpacity: .7,
       danmakuFontSize: 20, danmakuDisplayArea: .5, locale: 'zh-CN', blockedCategories: [],
     };
-    localStorage.setItem('kvideo-settings', JSON.stringify(settings));
-    localStorage.setItem('theme', 'dark');
+    try {
+      localStorage.setItem('kvideo-settings', JSON.stringify(settings));
+      localStorage.setItem('theme', 'dark');
+    } catch { /* opaque document */ }
     const serviceWorker = { register: async () => ({ update: async () => {} }) };
     try { Object.defineProperty(navigator, 'serviceWorker', { value: serviceWorker, configurable: true }); } catch { /* browser restriction */ }
+    window.__kvClipboard = '';
+    const clipboard = { writeText: async (value) => { window.__kvClipboard = String(value); }, readText: async () => window.__kvClipboard };
+    try { Object.defineProperty(navigator, 'clipboard', { value: clipboard, configurable: true }); } catch { /* browser restriction */ }
     window.__kvMetrics = { errors: [], rejections: [], longTasks: [], lcp: 0, cls: 0 };
     addEventListener('error', (event) => window.__kvMetrics.errors.push(String(event.error?.stack || event.message)));
     addEventListener('unhandledrejection', (event) => window.__kvMetrics.rejections.push(String(event.reason?.stack || event.reason)));

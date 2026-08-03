@@ -2,7 +2,14 @@ import path from 'node:path';
 import { finding } from '../core/finding.mjs';
 import { lineCount, relative, walk, writeJson } from '../core/files.mjs';
 
-const codeExt = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.css', '.swift', '.kt', '.kts']);
+const codeExt = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.css', '.scss', '.swift', '.kt', '.kts',
+  '.json', '.yaml', '.yml', '.xml', '.svg', '.html', '.sh', '.toml', '.properties']);
+const codeNames = new Set(['Dockerfile', 'gradlew']);
+const generatedNames = /(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml|\.min\.(?:js|css))$/;
+
+export function projectSourceFile(file) {
+  return !generatedNames.test(file) && (codeExt.has(path.extname(file)) || codeNames.has(path.basename(file)));
+}
 
 function inventory(root, files) {
   return files.map((file) => ({ file: relative(root, file), lines: lineCount(file) })).sort((a, b) => b.lines - a.lines);
@@ -10,7 +17,7 @@ function inventory(root, files) {
 
 export async function checkSourcePolicy(ctx) {
   const root = ctx.config.root;
-  const projectFiles = walk(root, (file) => codeExt.has(path.extname(file)) && !file.includes('/verification/'));
+  const projectFiles = walk(root, (file) => projectSourceFile(file) && !file.includes('/verification/'));
   const project = inventory(root, projectFiles);
   const oversized = project.filter((item) => item.lines > ctx.config.maxSourceLines);
   const totalLines = project.reduce((sum, item) => sum + item.lines, 0);
@@ -23,7 +30,8 @@ export async function checkSourcePolicy(ctx) {
     impact: oversized.slice(0, 20).map((item) => `${item.file}:${item.lines}`).join(', '),
     evidence: [path.join(ctx.dirs.metrics, 'source-inventory.json')], remediation: 'Split oversized business files by cohesive responsibility in a separate change.',
   });
-  const authored = walk(ctx.config.verifyDir, (file) => !file.includes('/node_modules/') && !file.includes('/artifacts/') && path.basename(file) !== 'package-lock.json');
+  const authored = walk(ctx.config.verifyDir, (file) => !file.includes('/node_modules/') && !file.includes('/artifacts/')
+    && !file.includes('/tmp/') && path.basename(file) !== 'package-lock.json');
   const validator = inventory(ctx.config.verifyDir, authored);
   const validatorOversized = validator.filter((item) => item.lines > ctx.config.maxSourceLines);
   writeJson(path.join(ctx.dirs.metrics, 'verification-inventory.json'), validator);

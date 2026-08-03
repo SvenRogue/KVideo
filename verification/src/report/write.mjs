@@ -21,25 +21,28 @@ function renderJunit(ctx, counts) {
   return `<?xml version="1.0"?><testsuite name="kvideo-verification" tests="${ctx.findings.length}" failures="${counts.FAIL}" skipped="${counts.SKIP}">${cases}</testsuite>`;
 }
 
-function renderMarkdown(ctx, counts) {
+function renderMarkdown(ctx, summary) {
   const failures = ctx.findings.filter((item) => item.status === 'FAIL');
   const warnings = ctx.findings.filter((item) => item.status === 'WARN');
   const rows = [...failures, ...warnings].map((item) =>
-    `| ${item.status} | ${item.severity} | \`${item.id}\` | ${item.title.replaceAll('|', '\\|')} |`,
+    `| ${item.status} | ${item.severity} | \`${item.id}\` | ${item.title.replaceAll('|', '\\|')} | ${item.reason.replaceAll('|', '\\|')} |`,
   );
   return `# KVideo verification ${ctx.runId}\n\n` +
-    `PASS ${counts.PASS} · FAIL ${counts.FAIL} · WARN ${counts.WARN} · SKIP ${counts.SKIP} · INFO ${counts.INFO}\n\n` +
+    `PASS ${summary.counts.PASS} · FAIL ${summary.counts.FAIL} · WARN ${summary.counts.WARN} · SKIP ${summary.counts.SKIP} · INFO ${summary.counts.INFO}\n\n` +
+    `Duration ${summary.durationMs} ms · success ${summary.success}\n\n` +
     `A green run proves only the declared checks. Coverage gaps are explicit findings.\n\n` +
-    `| Status | Severity | Check | Result |\n|---|---|---|---|\n${rows.join('\n') || '| PASS | info | — | No failures or warnings |'}\n`;
+    `| Status | Severity | Check | Result | Reason |\n|---|---|---|---|---|\n${rows.join('\n') || '| PASS | info | — | No failures or warnings | — |'}\n`;
 }
 
 export function writeReports(ctx) {
   const counts = totals(ctx.findings);
   const finishedAt = new Date().toISOString();
+  const durationMs = Date.parse(finishedAt) - Date.parse(ctx.startedAt);
+  const summary = { runId: ctx.runId, startedAt: ctx.startedAt, finishedAt, durationMs, success: counts.FAIL === 0, counts };
   writeJson(path.join(ctx.artifacts, 'findings.json'), ctx.findings);
-  writeJson(path.join(ctx.artifacts, 'summary.json'), { runId: ctx.runId, startedAt: ctx.startedAt, finishedAt, counts });
+  writeJson(path.join(ctx.artifacts, 'summary.json'), summary);
   fs.writeFileSync(path.join(ctx.artifacts, 'junit.xml'), renderJunit(ctx, counts));
-  fs.writeFileSync(path.join(ctx.artifacts, 'summary.md'), renderMarkdown(ctx, counts));
-  fs.writeFileSync(path.join(ctx.artifacts, 'report.html'), renderHtml(ctx, counts));
+  fs.writeFileSync(path.join(ctx.artifacts, 'summary.md'), renderMarkdown(ctx, summary));
+  fs.writeFileSync(path.join(ctx.artifacts, 'report.html'), renderHtml(ctx, summary));
   return counts;
 }

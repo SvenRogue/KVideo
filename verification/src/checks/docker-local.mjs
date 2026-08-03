@@ -4,6 +4,7 @@ import { finding } from '../core/finding.mjs';
 import { jsonBody, request } from '../core/http.mjs';
 import { waitForUrl } from '../core/service.mjs';
 import { writeJson } from '../core/files.mjs';
+import { createDockerContext, removeDockerContext } from './docker-context.mjs';
 
 export async function checkDockerLocal(ctx) {
   if (ctx.config.quick) return finding(ctx, {
@@ -12,7 +13,13 @@ export async function checkDockerLocal(ctx) {
   });
   const image = `kvideo-verification:${ctx.state.version}`;
   const name = `kvideo-verification-${Date.now()}`;
-  const build = await runCommand(ctx, 'docker-build', 'docker', ['build', '--pull', '--tag', image, '.'], { timeoutMs: 1_800_000 });
+  const context = createDockerContext(ctx);
+  let build;
+  try {
+    build = await runCommand(ctx, 'docker-build', 'docker', ['build', '--pull', '--tag', image, context], { timeoutMs: 1_800_000 });
+  } finally {
+    removeDockerContext(context);
+  }
   if (build.code !== 0) return finding(ctx, {
     id: 'docker.local-image', category: 'docker', title: 'Local Docker image builds and runs', status: 'FAIL', severity: 'critical',
     expected: 'docker build exit 0', actual: `exit ${build.code}`, reason: 'The release container cannot be produced from this checkout.',

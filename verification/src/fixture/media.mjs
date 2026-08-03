@@ -11,7 +11,8 @@ export async function createMedia(ctx) {
     '-hide_banner', '-loglevel', 'error', '-y',
     '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=30',
     '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100',
-    '-t', '8', '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-t', '60', '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
     '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', mp4,
   ], { timeoutMs: 120_000 });
   const segment = generate.code === 0 ? await runCommand(ctx, 'fixture-hls', 'ffmpeg', [
@@ -22,7 +23,7 @@ export async function createMedia(ctx) {
   const ok = generate.code === 0 && segment.code === 0 && fs.existsSync(mp4);
   finding(ctx, {
     id: 'fixture.media', category: 'harness', title: 'Deterministic MP4 and HLS fixtures were generated',
-    status: ok ? 'PASS' : 'FAIL', severity: 'critical', expected: 'Playable 8-second MP4 and HLS assets',
+    status: ok ? 'PASS' : 'FAIL', severity: 'critical', expected: 'Playable 60-second MP4 and 2-second-GOP HLS assets',
     actual: ok ? `${fs.statSync(mp4).size} bytes` : `ffmpeg exits ${generate.code}/${segment.code}`,
     reason: ok ? 'Video checks use locally generated media and do not depend on third-party streams.' : 'Video evidence cannot be produced without deterministic fixtures.',
     evidence: [generate.outputPath, segment.outputPath], remediation: 'Install a working ffmpeg with H.264/AAC support.',

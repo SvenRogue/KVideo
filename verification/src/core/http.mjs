@@ -1,3 +1,9 @@
+import crypto from 'node:crypto';
+
+function isTextual(contentType = '') {
+  return /^(text\/)|json|xml|javascript|mpegurl|event-stream|svg/i.test(contentType);
+}
+
 export async function request(url, options = {}) {
   const started = performance.now();
   const { timeoutMs = 20_000, ...fetchOptions } = options;
@@ -8,13 +14,17 @@ export async function request(url, options = {}) {
       signal: AbortSignal.timeout(timeoutMs),
     });
     const buffer = Buffer.from(await response.arrayBuffer());
+    const headers = Object.fromEntries(response.headers);
+    const preview = buffer.subarray(0, 100_000);
     return {
       ok: true,
       status: response.status,
       durationMs: Math.round(performance.now() - started),
-      headers: Object.fromEntries(response.headers),
+      headers,
       bytes: buffer.length,
-      body: buffer.toString('utf8', 0, Math.min(buffer.length, 100_000)),
+      sha256: crypto.createHash('sha256').update(buffer).digest('hex'),
+      body: isTextual(headers['content-type']) ? preview.toString('utf8') : '',
+      bodyTruncated: buffer.length > preview.length,
     };
   } catch (error) {
     return {
@@ -22,7 +32,7 @@ export async function request(url, options = {}) {
       status: 0,
       durationMs: Math.round(performance.now() - started),
       error: error instanceof Error ? error.message : String(error),
-      headers: {}, bytes: 0, body: '',
+      headers: {}, bytes: 0, sha256: null, body: '', bodyTruncated: false,
     };
   }
 }
