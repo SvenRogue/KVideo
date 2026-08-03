@@ -10,6 +10,37 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
 
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+          {
+            key: 'Content-Security-Policy',
+            value: [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-inline' https://fastly.jsdelivr.net https://www.gstatic.com https://va.vercel-scripts.com",
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' data: blob: https: http:",
+              "font-src 'self' data:",
+              "connect-src 'self' blob: https: http:",
+              "media-src 'self' blob: https: http:",
+              "object-src 'none'",
+              "base-uri 'self'",
+              "form-action 'self'",
+              "frame-ancestors 'none'",
+              "worker-src 'self' blob:",
+            ].join('; '),
+          },
+        ],
+      },
+    ];
+  },
+
   // Compiler optimizations
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production',
@@ -40,74 +71,38 @@ const nextConfig: NextConfig = {
         protocol: 'https',
         hostname: 'img9.doubanio.com',
       },
-      // Video source images - allow all subdomains with wildcards
-      {
-        protocol: 'http',
-        hostname: '**.com',
-      },
+      // Video source images - allow all subdomains with wildcards (https only)
       {
         protocol: 'https',
         hostname: '**.com',
-      },
-      {
-        protocol: 'http',
-        hostname: '**.cn',
       },
       {
         protocol: 'https',
         hostname: '**.cn',
       },
       {
-        protocol: 'http',
-        hostname: '**.net',
-      },
-      {
         protocol: 'https',
         hostname: '**.net',
-      },
-      {
-        protocol: 'http',
-        hostname: '**.org',
       },
       {
         protocol: 'https',
         hostname: '**.org',
       },
       {
-        protocol: 'http',
-        hostname: '**.tv',
-      },
-      {
         protocol: 'https',
         hostname: '**.tv',
-      },
-      {
-        protocol: 'http',
-        hostname: '**.io',
       },
       {
         protocol: 'https',
         hostname: '**.io',
       },
       {
-        protocol: 'http',
-        hostname: '**.xyz',
-      },
-      {
         protocol: 'https',
         hostname: '**.xyz',
       },
       {
-        protocol: 'http',
-        hostname: '**.online',
-      },
-      {
         protocol: 'https',
         hostname: '**.online',
-      },
-      {
-        protocol: 'http',
-        hostname: '**.top',
       },
       {
         protocol: 'https',

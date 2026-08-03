@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getRuntimeFeatures } from '@/lib/server/runtime-features';
+import { isBlockedTargetUrl } from '@/lib/server/network-guard';
 
 export const runtime = 'edge';
 
@@ -110,6 +111,10 @@ export async function GET(request: NextRequest) {
 
   if (!url) {
     return NextResponse.json({ error: 'Missing url parameter' }, { status: 400 });
+  }
+
+  if (isBlockedTargetUrl(url)) {
+    return NextResponse.json({ error: 'Unsupported URL' }, { status: 400 });
   }
 
   try {

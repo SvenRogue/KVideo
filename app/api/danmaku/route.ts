@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { isBlockedTargetUrl } from '@/lib/server/network-guard';
+import { clientIp, isRateLimited } from '@/lib/server/rate-limit';
+import { getRuntimeEnvValue } from '@/lib/server/runtime-env';
 
 export const runtime = 'edge';
 
@@ -7,6 +10,8 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
+const RATE_LIMIT_MAX = 30;
+const RATE_LIMIT_WINDOW_MS = 60_000;
 
 export async function OPTIONS() {
   return new NextResponse(null, { headers: CORS_HEADERS });
@@ -26,6 +31,33 @@ export async function GET(request: NextRequest) {
 
   // Normalize base URL (remove trailing slash)
   const baseUrl = apiUrl.replace(/\/+$/, '');
+
+  // Only the operator-configured danmaku API is allowed when one is set;
+  // otherwise fall back to public-host-only so self-hosted custom APIs still work.
+  const configuredApiUrl = (
+    getRuntimeEnvValue('DANMAKU_API_URL') ||
+    getRuntimeEnvValue('NEXT_PUBLIC_DANMAKU_API_URL')
+  ).replace(/\/+$/, '');
+  if (configuredApiUrl) {
+    if (baseUrl !== configuredApiUrl) {
+      return NextResponse.json(
+        { error: 'Unsupported API host' },
+        { status: 400, headers: CORS_HEADERS }
+      );
+    }
+  } else if (isBlockedTargetUrl(baseUrl)) {
+    return NextResponse.json(
+      { error: 'Unsupported API host' },
+      { status: 400, headers: CORS_HEADERS }
+    );
+  }
+
+  if (isRateLimited(clientIp(request), RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS)) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: CORS_HEADERS }
+    );
+  }
 
   try {
     let targetUrl: string;

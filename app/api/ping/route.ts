@@ -5,11 +5,24 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { probeSourceLatency } from '@/lib/api/source-latency';
+import { isBlockedTargetUrl } from '@/lib/server/network-guard';
+import { getRuntimeFeatures } from '@/lib/server/runtime-features';
 
 export const runtime = 'edge';
 
 export async function POST(request: NextRequest) {
     try {
+        const runtimeFeatures = getRuntimeFeatures();
+        if (runtimeFeatures.restrictedManagedDeployment) {
+            return NextResponse.json(
+                {
+                    error: 'Latency probing is disabled on this deployment',
+                    message: runtimeFeatures.restrictionSummary,
+                },
+                { status: 403 }
+            );
+        }
+
         const body = await request.json();
         const { url } = body;
 
@@ -17,14 +30,8 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
         }
 
-        // Validate URL format
-        try {
-            const parsedUrl = new URL(url);
-            if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-                return NextResponse.json({ error: 'Unsupported URL protocol' }, { status: 400 });
-            }
-        } catch {
-            return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 });
+        if (isBlockedTargetUrl(url)) {
+            return NextResponse.json({ error: 'Unsupported URL' }, { status: 400 });
         }
 
         const result = await probeSourceLatency(url);

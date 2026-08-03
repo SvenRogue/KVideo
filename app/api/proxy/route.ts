@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processM3u8Content } from '@/lib/utils/proxy-utils';
 import { fetchWithRetry } from '@/lib/utils/fetch-with-retry';
 import { getRuntimeFeatures } from '@/lib/server/runtime-features';
+import { isBlockedTargetUrl } from '@/lib/server/network-guard';
 
 export const runtime = 'edge';
 
@@ -28,10 +29,14 @@ export async function GET(request: NextRequest) {
         return new NextResponse('Missing URL parameter', { status: 400 });
     }
 
+    if (isBlockedTargetUrl(url)) {
+        return new NextResponse('Blocked URL', { status: 403 });
+    }
+
     try {
         // Extract headers to forward (only essential ones)
         const requestHeaders: Record<string, string> = {};
-        const forwardHeaders = ['cookie', 'range'];
+        const forwardHeaders = ['range'];
 
         forwardHeaders.forEach(key => {
             const value = request.headers.get(key);
