@@ -3,7 +3,6 @@ name: Upstream Sync
 permissions:
   contents: write
   pull-requests: write # Required to create the PR
-  workflows: write # Required to push branches that touch workflow files
 
 env:
   UPSTREAM_REPO: KuekHaoYang/KVideo
