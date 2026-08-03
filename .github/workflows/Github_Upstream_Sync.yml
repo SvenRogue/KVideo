@@ -3,6 +3,7 @@ name: Upstream Sync
 permissions:
   contents: write
   pull-requests: write # Required to create the PR
+  workflows: write # Required to push branches that touch workflow files
 
 env:
   UPSTREAM_REPO: KuekHaoYang/KVideo
@@ -64,6 +65,12 @@ jobs:
 
             # 4. Create a clean branch from upstream content
             git checkout -B $SYNC_BRANCH upstream/$UPSTREAM_BRANCH
+
+            # Keep this fork's workflows; do not let the sync PR clobber them.
+            git rm -r --ignore-unmatch .github/workflows
+            git checkout "$TARGET_SHA" -- .github/workflows
+            git diff --cached --quiet || git commit -m "Keep fork workflows during upstream sync"
+
             git push -f origin $SYNC_BRANCH
 
             # 5. Create Pull Request using GitHub CLI
